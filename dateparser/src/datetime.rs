@@ -77,6 +77,7 @@ where
         self.month_md_hms(input)
             .or_else(|| self.month_mdy_hms(input))
             .or_else(|| self.month_mdy_hms_z(input))
+            .or_else(|| self.month_mdy_h(input))
             .or_else(|| self.month_mdy(input))
     }
 
@@ -97,7 +98,9 @@ where
         if !RE.is_match(input) {
             return None;
         }
-        self.slash_mdy_hms(input).or_else(|| self.slash_mdy(input))
+        self.slash_mdy_hms(input)
+            .or_else(|| self.slash_mdy_h(input))
+            .or_else(|| self.slash_mdy(input))
     }
 
     fn hyphen_mdy_family(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
@@ -107,7 +110,8 @@ where
         if !RE.is_match(input) {
             return None;
         }
-        self.hyphen_mdy_hms(input).or_else(|| self.hyphen_mdy(input))
+        self.hyphen_mdy_hms(input)
+            .or_else(|| self.hyphen_mdy(input))
     }
 
     fn slash_ymd_family(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
@@ -404,7 +408,9 @@ where
             return None;
         } else {
             //I need to add in minutes else chrono will fail to parse with an error of ParseErrorKind::NotEnough
-            RE.replace(input, |caps: &Captures| format!("{}:00 {}", &caps[1], &caps[2]))
+            RE.replace(input, |caps: &Captures| {
+                format!("{}:00 {}", &caps[1], &caps[2])
+            })
         };
 
         let now = Utc::now().with_timezone(self.tz);
@@ -524,6 +530,33 @@ where
             }
         }
         None
+    }
+
+    // Mon dd, yyyy, hh:mm:ss
+    // - May 8, 2009 5 PM
+    // - September 17, 2012 10am
+    fn month_mdy_h(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(
+                r"^([a-zA-Z]{3,9}\.?\s+[0-9]{1,2},\s+[0-9]{2,4},?\s+[0-9]{1,2})\s*(am|pm|AM|PM)$",
+            )
+            .unwrap();
+        }
+        let with_minutes = if !RE.is_match(input) {
+            return None;
+        } else {
+            //I need to add in minutes else chrono will fail to parse with an error of ParseErrorKind::NotEnough
+            RE.replace(input, |caps: &Captures| {
+                format!("{}:00{}", &caps[1], &caps[2])
+            })
+        };
+
+        let dt = with_minutes.replace(", ", " ").replace(". ", " ");
+        self.tz
+            .datetime_from_str(&dt, "%B %d %Y %I:%M %P")
+            .ok()
+            .map(|at_tz| at_tz.with_timezone(&Utc))
+            .map(Ok)
     }
 
     // Mon dd, yyyy
@@ -648,6 +681,63 @@ where
             .or_else(|_| self.tz.datetime_from_str(input, "%m/%d/%Y %H:%M:%S%.f"))
             .or_else(|_| self.tz.datetime_from_str(input, "%m/%d/%Y %I:%M:%S %P"))
             .or_else(|_| self.tz.datetime_from_str(input, "%m/%d/%Y %I:%M %P"))
+            .ok()
+            .map(|at_tz| at_tz.with_timezone(&Utc))
+            .map(Ok)
+    }
+
+    // mm/dd/yyyy hh:mm:ss
+    // - 8/8/1965 12 AM
+    // - 8/8/1965 01 PM
+    // - 8/8/1965 1 PM
+    // - 8/8/1965 12am
+    fn slash_mdy_h(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
+        lazy_static! {
+            static ref RE: Regex =
+                Regex::new(r"^([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4}\s+[0-9]{1,2})\s*(am|pm|AM|PM)$")
+                    .unwrap();
+        }
+        let with_minutes = if !RE.is_match(input) {
+            return None;
+        } else {
+            //I need to add in minutes else chrono will fail to parse with an error of ParseErrorKind::NotEnough
+            RE.replace(input, |caps: &Captures| {
+                format!("{}:00{}", &caps[1], &caps[2])
+            })
+        };
+
+        self.tz
+            .datetime_from_str(&with_minutes, "%m/%d/%y %H:%M:%S")
+            .or_else(|_| self.tz.datetime_from_str(&with_minutes, "%m/%d/%y %H:%M"))
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%y %H:%M:%S%.f")
+            })
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%y %I:%M:%S %P")
+            })
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%y %I:%M %P")
+            })
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%Y %H:%M:%S")
+            })
+            .or_else(|_| self.tz.datetime_from_str(&with_minutes, "%m/%d/%Y %H:%M"))
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%Y %H:%M:%S%.f")
+            })
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%Y %I:%M:%S %P")
+            })
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_minutes, "%m/%d/%Y %I:%M %P")
+            })
             .ok()
             .map(|at_tz| at_tz.with_timezone(&Utc))
             .map(Ok)
@@ -1418,6 +1508,29 @@ mod tests {
     }
 
     #[test]
+    fn month_mdy_h() {
+        let parse = Parse::new(&Utc, None);
+
+        let test_cases = [
+            ("May 8, 2009 5 PM", Utc.ymd(2009, 5, 8).and_hms(17, 0, 0)),
+            (
+                "September 17, 2012 10am",
+                Utc.ymd(2012, 9, 17).and_hms(10, 0, 0),
+            ),
+        ];
+
+        for &(input, want) in test_cases.iter() {
+            assert_eq!(
+                parse.month_mdy_h(input).unwrap().unwrap(),
+                want,
+                "month_mdy_h/{}",
+                input
+            )
+        }
+        assert!(parse.month_mdy_hms("not-date-time").is_none());
+    }
+
+    #[test]
     fn month_mdy() {
         let parse = Parse::new(&Utc, None);
 
@@ -1569,6 +1682,28 @@ mod tests {
     }
 
     #[test]
+    fn slash_mdy_h() {
+        let parse = Parse::new(&Utc, None);
+
+        let test_cases = vec![
+            ("8/8/1965 12 AM", Utc.ymd(1965, 8, 8).and_hms(0, 0, 0)),
+            ("8/8/1965 01 PM", Utc.ymd(1965, 8, 8).and_hms(13, 0, 0)),
+            ("8/8/1965 1 PM", Utc.ymd(1965, 8, 8).and_hms(13, 0, 0)),
+            ("8/8/1965 12am", Utc.ymd(1965, 8, 8).and_hms(0, 0, 0)),
+        ];
+
+        for &(input, want) in test_cases.iter() {
+            assert_eq!(
+                parse.slash_mdy_h(input).unwrap().unwrap(),
+                want,
+                "slash_mdy_h/{}",
+                input
+            )
+        }
+        assert!(parse.slash_mdy_h("not-date-time").is_none());
+    }
+
+    #[test]
     fn slash_mdy() {
         let parse = Parse::new(&Utc, None);
 
@@ -1674,7 +1809,6 @@ mod tests {
         }
         assert!(parse.hyphen_mdy_hms("not-date-time").is_none());
     }
-
 
     #[test]
     fn slash_ymd_hms() {

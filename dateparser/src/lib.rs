@@ -185,6 +185,7 @@
 //! ];
 //!
 //! for date_str in accepted {
+//!     println!("Parsing: {}", date_str);
 //!     let result = date_str.parse::<DateTimeUtc>();
 //!     assert!(result.is_ok())
 //! }
