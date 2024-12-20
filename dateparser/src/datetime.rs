@@ -3,7 +3,7 @@ use crate::timezone;
 use anyhow::{anyhow, Result};
 use chrono::prelude::*;
 use lazy_static::lazy_static;
-use regex::Regex;
+use regex::{Captures, Regex};
 
 /// Parse struct has methods implemented parsers for accepted formats.
 pub struct Parse<'z, Tz2> {
@@ -62,7 +62,9 @@ where
         if !RE.is_match(input) {
             return None;
         }
-        self.hms(input).or_else(|| self.hms_z(input))
+        self.hms(input)
+            .or_else(|| self.hms_z(input))
+            .or_else(|| self.h(input))
     }
 
     fn month_mdy_family(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
@@ -389,6 +391,28 @@ where
             }
         }
         None
+    }
+
+    // hh
+    // - 4pm
+    // - 6 AM
+    fn h(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(r"^([0-9]{1,2})\s*(am|pm|AM|PM)$").unwrap();
+        }
+        let with_minutes = if !RE.is_match(input) {
+            return None;
+        } else {
+            //I need to add in minutes else chrono will fail to parse with an error of ParseErrorKind::NotEnough
+            RE.replace(input, |caps: &Captures| format!("{}:00 {}", &caps[1], &caps[2]))
+        };
+
+        let now = Utc::now().with_timezone(self.tz);
+        NaiveTime::parse_from_str(&with_minutes, "%I:%M %P")
+            .ok()
+            .and_then(|parsed| now.date().and_time(parsed))
+            .map(|datetime| datetime.with_timezone(&Utc))
+            .map(Ok)
     }
 
     // yyyy-mon-dd
@@ -1249,6 +1273,32 @@ mod tests {
             )
         }
         assert!(parse.hms_z("not-date-time").is_none());
+    }
+
+    #[test]
+    fn h() {
+        let parse = Parse::new(&Utc, None);
+
+        let test_cases = [
+            (
+                "4pm",
+                Utc::now().date().and_time(NaiveTime::from_hms(16, 0, 0)),
+            ),
+            (
+                "6 AM",
+                Utc::now().date().and_time(NaiveTime::from_hms(6, 0, 0)),
+            ),
+        ];
+
+        for &(input, want) in test_cases.iter() {
+            assert_eq!(
+                parse.h(input).unwrap().unwrap(),
+                want.unwrap(),
+                "h/{}",
+                input
+            )
+        }
+        assert!(parse.hms("not-date-time").is_none());
     }
 
     #[test]
