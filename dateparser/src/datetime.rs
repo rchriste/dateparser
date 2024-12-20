@@ -57,7 +57,7 @@ where
 
     fn hms_family(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^[0-9]{1,2}():[0-9]{2})?").unwrap();
+            static ref RE: Regex = Regex::new(r"^[0-9]{1,2}").unwrap();
         }
         if !RE.is_match(input) {
             return None;
