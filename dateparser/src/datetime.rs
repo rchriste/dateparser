@@ -15,14 +15,14 @@ impl<'z, Tz2> Parse<'z, Tz2>
 where
     Tz2: TimeZone,
 {
-    /// Create a new instrance of [`Parse`] with a custom parsing timezone that handles the
+    /// Create a new instance of [`Parse`] with a custom parsing timezone that handles the
     /// datetime string without time offset.
     pub fn new(tz: &'z Tz2, default_time: Option<NaiveTime>) -> Self {
         Self { tz, default_time }
     }
 
     /// This method tries to parse the input datetime string with a list of accepted formats. See
-    /// more exmaples from [`Parse`], [`crate::parse()`] and [`crate::parse_with_timezone()`].
+    /// more examples from [`Parse`], [`crate::parse()`] and [`crate::parse_with_timezone()`].
     pub fn parse(&self, input: &str) -> Result<DateTime<Utc>> {
         self.unix_timestamp(input)
             .or_else(|| self.rfc2822(input))
@@ -57,7 +57,7 @@ where
 
     fn hms_family(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
         lazy_static! {
-            static ref RE: Regex = Regex::new(r"^[0-9]{1,2}:[0-9]{2}").unwrap();
+            static ref RE: Regex = Regex::new(r"^[0-9]{1,2}():[0-9]{2})?").unwrap();
         }
         if !RE.is_match(input) {
             return None;
