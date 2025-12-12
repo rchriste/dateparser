@@ -101,6 +101,7 @@ where
         self.slash_mdy_hms(input)
             .or_else(|| self.slash_mdy_h(input))
             .or_else(|| self.slash_mdy(input))
+            .or_else(|| self.slash_md(input))
     }
 
     fn hyphen_mdy_family(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
@@ -766,6 +767,34 @@ where
             .or_else(|_| NaiveDate::parse_from_str(input, "%m/%d/%Y"))
             .ok()
             .map(|parsed| parsed.and_time(time))
+            .and_then(|datetime| self.tz.from_local_datetime(&datetime).single())
+            .map(|at_tz| at_tz.with_timezone(&Utc))
+            .map(Ok)
+    }
+
+    // mm/dd (defaults missing year to current year)
+    // - 12/20
+    // - 1/5
+    fn slash_md(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
+        lazy_static! {
+            static ref RE: Regex =
+                Regex::new(r"^(?P<month>[0-9]{1,2})/(?P<day>[0-9]{1,2})$").unwrap();
+        }
+        let caps = RE.captures(input)?;
+        let month = caps.name("month")?.as_str().parse::<u32>().ok()?;
+        let day = caps.name("day")?.as_str().parse::<u32>().ok()?;
+
+        let now_at_tz = Utc::now().with_timezone(self.tz);
+        let year = now_at_tz.year();
+
+        // set time to use
+        let time = match self.default_time {
+            Some(v) => v,
+            None => now_at_tz.time(),
+        };
+
+        NaiveDate::from_ymd_opt(year, month, day)
+            .map(|date| date.and_time(time))
             .and_then(|datetime| self.tz.from_local_datetime(&datetime).single())
             .map(|at_tz| at_tz.with_timezone(&Utc))
             .map(Ok)
@@ -1735,6 +1764,22 @@ mod tests {
             )
         }
         assert!(parse.slash_mdy("not-date-time").is_none());
+    }
+
+    #[test]
+    fn slash_md_defaults_to_current_year() {
+        let parse = Parse::new(&Utc, None);
+        let input = "12/20";
+        let parsed = parse.parse(input).unwrap();
+        let expected_year = Utc::now().year();
+
+        assert_eq!(parsed.year(), expected_year, "slash_md/year/{}", input);
+        assert_eq!(
+            (parsed.month(), parsed.day()),
+            (12, 20),
+            "slash_md/month_day/{}",
+            input
+        );
     }
 
     #[test]
