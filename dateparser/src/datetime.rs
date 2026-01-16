@@ -99,7 +99,9 @@ where
             return None;
         }
         self.slash_mdy_hms(input)
+            .or_else(|| self.slash_md_hms(input))
             .or_else(|| self.slash_mdy_h(input))
+            .or_else(|| self.slash_md_h(input))
             .or_else(|| self.slash_mdy(input))
             .or_else(|| self.slash_md(input))
     }
@@ -687,6 +689,47 @@ where
             .map(Ok)
     }
 
+    // mm/dd hh:mm(:ss)(.subsec) [AM/PM] (defaults missing year to current year)
+    // - 4/8 22:05
+    // - 04/2 03:00:51
+    // - 8/8 1:00 PM
+    fn slash_md_hms(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(
+                r"^(?P<month>[0-9]{1,2})/(?P<day>[0-9]{1,2})\s+(?P<time>[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?(\.[0-9]{1,9})?\s*(am|pm|AM|PM)?)$"
+            )
+            .unwrap();
+        }
+        let caps = RE.captures(input)?;
+
+        let month = caps.name("month")?.as_str();
+        let day = caps.name("day")?.as_str();
+        let time = caps.name("time")?.as_str().trim();
+
+        // validate numeric month/day
+        month.parse::<u32>().ok()?;
+        day.parse::<u32>().ok()?;
+
+        let now_at_tz = Utc::now().with_timezone(self.tz);
+        let with_year = format!("{}/{}/{} {}", month, day, now_at_tz.year(), time);
+
+        self.tz
+            .datetime_from_str(&with_year, "%m/%d/%Y %H:%M:%S")
+            .or_else(|_| self.tz.datetime_from_str(&with_year, "%m/%d/%Y %H:%M"))
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_year, "%m/%d/%Y %H:%M:%S%.f")
+            })
+            .or_else(|_| {
+                self.tz
+                    .datetime_from_str(&with_year, "%m/%d/%Y %I:%M:%S %P")
+            })
+            .or_else(|_| self.tz.datetime_from_str(&with_year, "%m/%d/%Y %I:%M %P"))
+            .ok()
+            .map(|at_tz| at_tz.with_timezone(&Utc))
+            .map(Ok)
+    }
+
     // mm/dd/yyyy hh:mm:ss
     // - 8/8/1965 12 AM
     // - 8/8/1965 01 PM
@@ -739,6 +782,44 @@ where
                 self.tz
                     .datetime_from_str(&with_minutes, "%m/%d/%Y %I:%M %P")
             })
+            .ok()
+            .map(|at_tz| at_tz.with_timezone(&Utc))
+            .map(Ok)
+    }
+
+    // mm/dd hh AM/PM (defaults missing year to current year)
+    // - 8/8 12am
+    // - 8/8 1 PM
+    fn slash_md_h(&self, input: &str) -> Option<Result<DateTime<Utc>>> {
+        lazy_static! {
+            static ref RE: Regex = Regex::new(
+                r"^(?P<month>[0-9]{1,2})/(?P<day>[0-9]{1,2})\s+(?P<hour>[0-9]{1,2})\s*(?P<ampm>am|pm|AM|PM)$"
+            )
+            .unwrap();
+        }
+        let caps = RE.captures(input)?;
+
+        let month = caps.name("month")?.as_str();
+        let day = caps.name("day")?.as_str();
+        let hour = caps.name("hour")?.as_str();
+        let ampm = caps.name("ampm")?.as_str();
+
+        month.parse::<u32>().ok()?;
+        day.parse::<u32>().ok()?;
+        hour.parse::<u32>().ok()?;
+
+        let now_at_tz = Utc::now().with_timezone(self.tz);
+        let with_year = format!(
+            "{}/{}/{} {}:00 {}",
+            month,
+            day,
+            now_at_tz.year(),
+            hour,
+            ampm
+        );
+
+        self.tz
+            .datetime_from_str(&with_year, "%m/%d/%Y %I:%M %P")
             .ok()
             .map(|at_tz| at_tz.with_timezone(&Utc))
             .map(Ok)
@@ -1780,6 +1861,30 @@ mod tests {
             "slash_md/month_day/{}",
             input
         );
+    }
+
+    #[test]
+    fn slash_md_hms_defaults_to_current_year() {
+        let parse = Parse::new(&Utc, None);
+        let expected_year = Utc::now().year();
+
+        let input = "4/8 22:05";
+        let parsed = parse.parse(input).unwrap();
+        let want = Utc.ymd(expected_year, 4, 8).and_hms(22, 5, 0);
+
+        assert_eq!(parsed, want, "slash_md_hms/{}", input);
+    }
+
+    #[test]
+    fn slash_md_h_defaults_to_current_year() {
+        let parse = Parse::new(&Utc, None);
+        let expected_year = Utc::now().year();
+
+        let input = "8/8 12am";
+        let parsed = parse.parse(input).unwrap();
+        let want = Utc.ymd(expected_year, 8, 8).and_hms(0, 0, 0);
+
+        assert_eq!(parsed, want, "slash_md_h/{}", input);
     }
 
     #[test]
